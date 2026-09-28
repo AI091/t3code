@@ -53,7 +53,13 @@ function IndexDraftLanding() {
   const mostRecentProject = useMemo(() => {
     if (!bootstrapped) return null;
     const candidates = projectScope
-      ? projectScope.members.map((member) => member.project)
+      ? projects.filter((project) =>
+          projectScope.memberProjectRefs.some(
+            (projectRef) =>
+              projectRef.environmentId === project.environmentId &&
+              projectRef.projectId === project.id,
+          ),
+        )
       : projects;
     return sortScopedProjectsForSidebar(candidates, threads, "updated_at")[0] ?? null;
   }, [bootstrapped, projectScope, projects, threads]);
