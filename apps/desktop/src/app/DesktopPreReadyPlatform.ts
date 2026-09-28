@@ -90,6 +90,11 @@ export const make = Effect.gen(function* () {
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }
+      // Distros such as Omarchy set this session-wide on hybrid laptops. Chromium then decodes
+      // video on the NVIDIA GPU while rendering on the iGPU, and the frames never display.
+      if (process.env.LIBVA_DRIVER_NAME === "nvidia") {
+        Electron.app.commandLine.appendSwitch("disable-accelerated-video-decode");
+      }
     }
 
     return { linux, linuxPasswordStoreCommandLine };
