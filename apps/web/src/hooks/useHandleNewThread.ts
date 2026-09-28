@@ -34,6 +34,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { useSidebarProjectScope } from "./useSidebarProjectScope";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -436,6 +437,7 @@ export function useNewThreadHandler() {
 
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectScope = useSidebarProjectScope();
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -465,12 +467,15 @@ export function useHandleNewThread() {
   }, [projectOrder, projects]);
   const handleNewThread = useNewThreadHandler();
 
+  const defaultProject = projectScope?.representative ?? orderedProjects[0];
+
   return {
     activeDraftThread,
     activeThread,
-    defaultProjectRef: orderedProjects[0]
-      ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
+    defaultProjectRef: defaultProject
+      ? scopeProjectRef(defaultProject.environmentId, defaultProject.id)
       : null,
+    scopedProjectRefs: projectScope?.memberProjectRefs ?? null,
     handleNewThread,
     routeDraftId,
     routeThreadRef,

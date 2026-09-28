@@ -16,8 +16,10 @@ import {
 } from "./chatThreadActions";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-2");
 const PROJECT_ID = ProjectId.make("project-1");
 const FALLBACK_PROJECT_ID = ProjectId.make("project-2");
+const REMOTE_PROJECT_ID = ProjectId.make("project-3");
 const PROJECT_DEFAULT_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "project-default",
@@ -32,6 +34,7 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
     activeDraftThread: null,
     activeThread: undefined,
     defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
+    scopedProjectRefs: null,
     handleNewThread: async () => {},
     ...overrides,
   };
@@ -132,6 +135,39 @@ describe("chatThreadActions", () => {
     const projectRef = resolveThreadActionProjectRef(
       createContext({
         defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
+  });
+
+  it("keeps the active thread's member of a scoped project, so its machine carries", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeThread: {
+          environmentId: REMOTE_ENVIRONMENT_ID,
+          projectId: REMOTE_PROJECT_ID,
+        },
+        defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+        scopedProjectRefs: [
+          scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+          scopeProjectRef(REMOTE_ENVIRONMENT_ID, REMOTE_PROJECT_ID),
+        ],
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(REMOTE_ENVIRONMENT_ID, REMOTE_PROJECT_ID));
+  });
+
+  it("uses the scoped project instead of an active thread outside the scope", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: FALLBACK_PROJECT_ID,
+        },
+        defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+        scopedProjectRefs: [scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID)],
       }),
     );
 
