@@ -28,6 +28,7 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  resolveScopedNewThreadProjectRef,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -467,15 +468,19 @@ export function useHandleNewThread() {
   }, [projectOrder, projects]);
   const handleNewThread = useNewThreadHandler();
 
-  const defaultProject = projectScope?.representative ?? orderedProjects[0];
-
   return {
     activeDraftThread,
     activeThread,
-    defaultProjectRef: defaultProject
-      ? scopeProjectRef(defaultProject.environmentId, defaultProject.id)
+    defaultProjectRef: orderedProjects[0]
+      ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
       : null,
-    scopedProjectRefs: projectScope?.memberProjectRefs ?? null,
+    // Where New chat lands while the sidebar is scoped; null when unscoped.
+    scopedNewThreadProjectRef: projectScope
+      ? resolveScopedNewThreadProjectRef(
+          { activeDraftThread, activeThread: activeThread ?? undefined },
+          projectScope,
+        )
+      : null,
     handleNewThread,
     routeDraftId,
     routeThreadRef,

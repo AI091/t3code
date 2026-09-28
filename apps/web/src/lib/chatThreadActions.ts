@@ -34,8 +34,6 @@ export interface ChatThreadActionContext {
   readonly activeDraftThread: ThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
-  /** Members of the project the sidebar is scoped to, or null when unscoped. */
-  readonly scopedProjectRefs: readonly ScopedProjectRef[] | null;
   readonly handleNewThread: NewThreadHandler;
 }
 
@@ -70,25 +68,43 @@ export function hasExplicitComposerModelSelection(
   );
 }
 
-// New threads go to the viewed thread's project. While the sidebar is scoped,
-// a viewed project outside the scope yields to defaultProjectRef (the scope's
-// project): the scoped list would hide a thread created there.
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
-  const currentThread = context.activeThread ?? context.activeDraftThread;
-  const currentProjectRef = currentThread
-    ? scopeProjectRef(currentThread.environmentId, currentThread.projectId)
-    : null;
-  const currentProjectInScope =
-    currentProjectRef !== null &&
-    (context.scopedProjectRefs === null ||
-      context.scopedProjectRefs.some(
-        (projectRef) =>
-          projectRef.environmentId === currentProjectRef.environmentId &&
-          projectRef.projectId === currentProjectRef.projectId,
-      ));
-  return currentProjectInScope ? currentProjectRef : context.defaultProjectRef;
+  if (context.activeThread) {
+    return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
+  }
+  if (context.activeDraftThread) {
+    return scopeProjectRef(
+      context.activeDraftThread.environmentId,
+      context.activeDraftThread.projectId,
+    );
+  }
+  return context.defaultProjectRef;
+}
+
+// New chat from a scoped sidebar lands in the scoped project, so the thread
+// shows up in the list the user is looking at. The viewed project wins only
+// when it is a member of the scope, which keeps the viewed thread's machine.
+export function resolveScopedNewThreadProjectRef(
+  context: Pick<ChatThreadActionContext, "activeDraftThread" | "activeThread">,
+  scope: {
+    readonly representative: { readonly environmentId: EnvironmentId; readonly id: ProjectId };
+    readonly memberProjectRefs: readonly ScopedProjectRef[];
+  },
+): ScopedProjectRef {
+  const current = context.activeThread ?? context.activeDraftThread;
+  if (
+    current &&
+    scope.memberProjectRefs.some(
+      (projectRef) =>
+        projectRef.environmentId === current.environmentId &&
+        projectRef.projectId === current.projectId,
+    )
+  ) {
+    return scopeProjectRef(current.environmentId, current.projectId);
+  }
+  return scopeProjectRef(scope.representative.environmentId, scope.representative.id);
 }
 
 // New threads inherit only the *project* from the current context. Branch,

@@ -11,6 +11,7 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  resolveScopedNewThreadProjectRef,
   startNewThreadFromContext,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
@@ -20,6 +21,13 @@ const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-2");
 const PROJECT_ID = ProjectId.make("project-1");
 const FALLBACK_PROJECT_ID = ProjectId.make("project-2");
 const REMOTE_PROJECT_ID = ProjectId.make("project-3");
+const SCOPE = {
+  representative: { environmentId: ENVIRONMENT_ID, id: PROJECT_ID },
+  memberProjectRefs: [
+    scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+    scopeProjectRef(REMOTE_ENVIRONMENT_ID, REMOTE_PROJECT_ID),
+  ],
+};
 const PROJECT_DEFAULT_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "project-default",
@@ -34,7 +42,6 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
     activeDraftThread: null,
     activeThread: undefined,
     defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
-    scopedProjectRefs: null,
     handleNewThread: async () => {},
     ...overrides,
   };
@@ -141,34 +148,25 @@ describe("chatThreadActions", () => {
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
   });
 
-  it("keeps the active thread's member of a scoped project, so its machine carries", () => {
-    const projectRef = resolveThreadActionProjectRef(
-      createContext({
-        activeThread: {
-          environmentId: REMOTE_ENVIRONMENT_ID,
-          projectId: REMOTE_PROJECT_ID,
-        },
-        defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
-        scopedProjectRefs: [
-          scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
-          scopeProjectRef(REMOTE_ENVIRONMENT_ID, REMOTE_PROJECT_ID),
-        ],
-      }),
+  it("keeps a viewed thread inside the scope on its own machine", () => {
+    const projectRef = resolveScopedNewThreadProjectRef(
+      {
+        activeThread: { environmentId: REMOTE_ENVIRONMENT_ID, projectId: REMOTE_PROJECT_ID },
+        activeDraftThread: null,
+      },
+      SCOPE,
     );
 
     expect(projectRef).toEqual(scopeProjectRef(REMOTE_ENVIRONMENT_ID, REMOTE_PROJECT_ID));
   });
 
-  it("uses the scoped project instead of an active thread outside the scope", () => {
-    const projectRef = resolveThreadActionProjectRef(
-      createContext({
-        activeThread: {
-          environmentId: ENVIRONMENT_ID,
-          projectId: FALLBACK_PROJECT_ID,
-        },
-        defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
-        scopedProjectRefs: [scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID)],
-      }),
+  it("uses the scoped project when the viewed thread is outside the scope", () => {
+    const projectRef = resolveScopedNewThreadProjectRef(
+      {
+        activeThread: { environmentId: ENVIRONMENT_ID, projectId: FALLBACK_PROJECT_ID },
+        activeDraftThread: null,
+      },
+      SCOPE,
     );
 
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));

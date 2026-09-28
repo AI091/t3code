@@ -37,7 +37,7 @@ export interface SidebarThreadHeaderProps {
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
   newThreadInProjectShortcutLabel: string | null | undefined;
-  /** Shift+click only matters while a plain click opens the project picker. */
+  /** Shift+click only matters once there is more than one project to pick. */
   showNewThreadInProjectHint: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
   searchQuery: string;

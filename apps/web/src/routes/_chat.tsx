@@ -34,7 +34,7 @@ function ChatRouteGlobalShortcuts() {
     activeDraftThread,
     activeThread,
     defaultProjectRef,
-    scopedProjectRefs,
+    scopedNewThreadProjectRef,
     handleNewThread,
     routeThreadRef,
   } = useHandleNewThread();
@@ -106,7 +106,6 @@ function ChatRouteGlobalShortcuts() {
           activeDraftThread,
           activeThread: activeThread ?? undefined,
           defaultProjectRef,
-          scopedProjectRefs,
           handleNewThread,
         });
         return;
@@ -115,11 +114,15 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
+        // A scoped sidebar already names the project, so there is nothing to pick.
+        if (scopedNewThreadProjectRef) {
+          void handleNewThread(scopedNewThreadProjectRef);
+          return;
+        }
         // The default sidebar routes creation through the command palette
-        // whenever there is a real choice to make; the legacy sidebar,
-        // single-project setups, and a scoped sidebar (which already chose)
-        // keep the immediate contextual create.
-        if (!legacySidebarEnabled && projectGroupCount > 1 && scopedProjectRefs === null) {
+        // whenever there is a real choice to make; the legacy sidebar (and
+        // single-project setups) keep the immediate contextual create.
+        if (!legacySidebarEnabled && projectGroupCount > 1) {
           openCommandPalette({ open: "new-thread-in" });
           return;
         }
@@ -127,7 +130,6 @@ function ChatRouteGlobalShortcuts() {
           activeDraftThread,
           activeThread: activeThread ?? undefined,
           defaultProjectRef,
-          scopedProjectRefs,
           handleNewThread,
         });
         return;
@@ -191,7 +193,7 @@ function ChatRouteGlobalShortcuts() {
     previewOpen,
     projectGroupCount,
     routeThreadRef,
-    scopedProjectRefs,
+    scopedNewThreadProjectRef,
     selectedThreadKeysSize,
     legacySidebarEnabled,
     terminalOpen,

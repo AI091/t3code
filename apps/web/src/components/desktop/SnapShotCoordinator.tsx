@@ -199,7 +199,6 @@ export function SnapShotCoordinator() {
     activeDraftThread,
     activeThread,
     defaultProjectRef,
-    scopedProjectRefs,
     handleNewThread,
     routeDraftId,
     routeThreadRef,
@@ -233,7 +232,6 @@ export function SnapShotCoordinator() {
       activeDraftThread,
       activeThread: activeThread ?? undefined,
       defaultProjectRef,
-      scopedProjectRefs,
       handleNewThread,
     });
     if (!projectRef) return null;
@@ -241,14 +239,7 @@ export function SnapShotCoordinator() {
     if (!created) return null;
     lastTargetRef.current = created.draftId;
     return created.draftId;
-  }, [
-    activeDraftThread,
-    activeThread,
-    defaultProjectRef,
-    handleNewThread,
-    routeThreadRef,
-    scopedProjectRefs,
-  ]);
+  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef]);
 
   const resolveCaptureTarget = useCallback(
     () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget),

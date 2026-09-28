@@ -177,6 +177,7 @@ import {
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   searchSidebarThreads,
+  shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
@@ -4399,45 +4400,50 @@ export default function Sidebar() {
     updateThreadJumpHintsVisibility(shouldShowJumpHintsNow);
   }, [shouldShowJumpHintsNow, updateThreadJumpHintsVisibility]);
 
-  // New thread defaults to the project you're in (the scoped project, else
-  // the active thread's project, else the top project) — same resolution the
-  // command palette uses. A plain click only opens the palette's "New thread
-  // in..." picker when there is a real choice: several projects and no scope.
-  const newThreadOffersProjectChoice =
-    projectGroups.length > 1 && newThreadContext.scopedProjectRefs === null;
+  // New thread defaults to the project you're in (active thread's project,
+  // falling back to the top project) — same resolution the command palette
+  // uses. The command palette already offers a "New thread in..." submenu
+  // for multi-project setups.
   const handleNewThreadClick = useCallback(
     (event?: ReactMouseEvent) => {
-      if (isMobile) setOpenMobile(false);
-      // Shift+click creates directly in the current project even when there
-      // is a choice, skipping the palette picker.
-      if (!newThreadOffersProjectChoice || event?.shiftKey) {
+      // A scoped sidebar already names the project. Shift+click still means
+      // the current project, below.
+      const scopedProjectRef = newThreadContext.scopedNewThreadProjectRef;
+      if (scopedProjectRef && !event?.shiftKey) {
+        if (isMobile) setOpenMobile(false);
+        void newThreadContext.handleNewThread(scopedProjectRef);
+        return;
+      }
+      // One project: nothing to pick, create immediately. Shift+click creates
+      // directly in the current project even with several projects, skipping
+      // the palette picker.
+      if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
+        if (isMobile) setOpenMobile(false);
         void startNewThreadFromContext({
           activeDraftThread: newThreadContext.activeDraftThread,
           activeThread: newThreadContext.activeThread ?? undefined,
           defaultProjectRef: newThreadContext.defaultProjectRef,
-          scopedProjectRefs: newThreadContext.scopedProjectRefs,
           handleNewThread: newThreadContext.handleNewThread,
         });
         return;
       }
+      if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [isMobile, newThreadContext, newThreadOffersProjectChoice, setOpenMobile],
+    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
   );
 
-  // The button mirrors chat.new: with a project choice both route through
-  // the command palette's "New thread in..." picker, and without one both
-  // create immediately. With a choice the label is only the picker's
-  // shortcut: falling back to chat.newLocal would advertise the same shortcut
-  // for both the picker and direct create. Without one both commands create
-  // directly, so chat.newLocal is a valid fallback. The second tooltip line
-  // (choice only) advertises shift+click and its keyboard twin chat.newLocal
-  // for direct create.
+  // The button mirrors chat.new: in multi-project setups both route through
+  // the command palette's "New thread in..." picker, and in single-project
+  // setups both create immediately. In multi-project setups the label is only
+  // the picker's shortcut: falling back to chat.newLocal would advertise the
+  // same shortcut for both the picker and direct create. In single-project
+  // setups both commands create directly, so chat.newLocal is a valid
+  // fallback. The second tooltip line (multi-project only) advertises
+  // shift+click and its keyboard twin chat.newLocal for direct create.
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (newThreadOffersProjectChoice
-      ? undefined
-      : shortcutLabelForCommand(keybindings, "chat.newLocal"));
+    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
@@ -4588,7 +4594,7 @@ export default function Sidebar() {
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={newThreadOffersProjectChoice}
+              showNewThreadInProjectHint={projectGroups.length > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {
