@@ -1,12 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -51,12 +50,13 @@ it.layer(testLayer)("ClaudeDriver", (it) => {
     it.effect.skipIf(windowsHost)(`resolves updates for a ${layout} ~/.local/bin/claude`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const home = yield* fs.makeTempDirectoryScoped({ prefix: `t3-claude-${layout}-` });
-        const binaryPath = NodePath.join(home, ".local", "bin", "claude");
-        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        const binaryPath = path.join(home, ".local", "bin", "claude");
+        yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
         if (layout === "native") {
-          const versionPath = NodePath.join(home, ".local", "share", "claude", "versions", "2.1.0");
-          yield* fs.makeDirectory(NodePath.dirname(versionPath), { recursive: true });
+          const versionPath = path.join(home, ".local", "share", "claude", "versions", "2.1.0");
+          yield* fs.makeDirectory(path.dirname(versionPath), { recursive: true });
           yield* fs.writeFileString(versionPath, "#!/bin/sh\n");
           yield* fs.chmod(versionPath, 0o755);
           yield* fs.symlink(versionPath, binaryPath);
