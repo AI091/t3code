@@ -28,6 +28,7 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 import {
   codexModelFamily,
   createModelCapabilities,
+  formatCodexModelName,
   readCustomModelEntries,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -90,6 +91,11 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 
 const DEFAULT_SERVICE_TIER_ID = "default";
 
+/** Shorter copy for tiers whose catalog description wraps in the traits menu. */
+const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  ultrafast: "Even faster, more expensive",
+};
+
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
 }
@@ -115,6 +121,8 @@ export function codexPlanLabel(planType: string | null | undefined): string | un
       return "ChatGPT Pro 20x Subscription";
     case "prolite":
       return "ChatGPT Pro 5x Subscription";
+    case "promax":
+      return "ChatGPT Pro Max Subscription";
     case "team":
       return "ChatGPT Team Subscription";
     case "self_serve_business_prolite":
@@ -195,12 +203,15 @@ export function mapCodexModelCapabilities(
           label: "Standard",
           ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
         },
-        ...serviceTiers.map((tier) => ({
-          id: tier.id,
-          label: tier.name,
-          ...(tier.description ? { description: tier.description } : {}),
-          ...(defaultServiceTier === tier.id ? { isDefault: true } : {}),
-        })),
+        ...serviceTiers.map((tier) => {
+          const description = SERVICE_TIER_DESCRIPTIONS[tier.id] ?? tier.description;
+          return {
+            id: tier.id,
+            label: tier.name,
+            ...(description ? { description } : {}),
+            ...(defaultServiceTier === tier.id ? { isDefault: true } : {}),
+          };
+        }),
       ],
       currentValue: defaultServiceTier,
     });
@@ -211,19 +222,12 @@ export function mapCodexModelCapabilities(
   });
 }
 
-const toDisplayName = (model: CodexSchema.V2ModelListResponse__Model): string => {
-  // Capitalize 'gpt' to 'GPT-' and capitalize any letter following a dash
-  return model.displayName
-    .replace(/^gpt/i, "GPT") // Handle start with 'gpt' or 'GPT'
-    .replace(/-([a-z])/g, (_, c) => "-" + c.toUpperCase());
-};
-
 function parseCodexModelListResponse(
   response: CodexSchema.V2ModelListResponse,
 ): ReadonlyArray<ServerProviderModel> {
   return response.data.map((model) => ({
     slug: model.model,
-    name: toDisplayName(model),
+    name: formatCodexModelName(model.displayName),
     isCustom: false,
     ...(model.isDefault ? { isDefault: true } : {}),
     capabilities: mapCodexModelCapabilities(model),
@@ -369,7 +373,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
-  // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
+  // Expand here for parity with `CodexTextGeneration`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
