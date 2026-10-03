@@ -25,6 +25,11 @@ export type MiseOwnership =
       readonly kind: "npm-global";
       readonly resolvedCommandPath: string;
       readonly realCommandPath: string;
+      /**
+       * The Node install mise reported for an aliased Node such as `node-lts`;
+       * null when the literal `node` install directory is the only evidence.
+       */
+      readonly provenNodePrefix: string | null;
     }
   /** Mise is involved, but `mise upgrade` cannot be shown to reach the executable. */
   | { readonly kind: "uncertain"; readonly reason: string }
@@ -114,6 +119,7 @@ export const resolveMiseOwnership = Effect.fn("resolveMiseOwnership")(function* 
           kind: "npm-global",
           resolvedCommandPath: launch.launchPath,
           realCommandPath: launch.realPath,
+          provenNodePrefix: null,
         } satisfies MiseOwnership;
       }
       return uncertain(
@@ -738,6 +744,7 @@ const findOwningTool = Effect.fn("findOwningMiseTool")(function* (input: {
             kind: "npm-global",
             resolvedCommandPath: input.binPath,
             realCommandPath: input.realBinPath,
+            provenNodePrefix: installPath,
           } satisfies MiseOwnership;
         }
         if (!backend?.startsWith("npm:")) {

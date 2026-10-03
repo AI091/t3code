@@ -623,20 +623,41 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
     { skip: windowsHost },
   );
 
-  it.effect.each([
-    { name: "an alias for mise's Node", tool: "node-lts", backend: "core:node", owner: "npm" },
-    {
-      name: "an alias for an npm backend",
-      tool: "claude",
-      backend: "npm:@anthropic-ai/claude-code",
-      owner: "mise",
-    },
-    { name: "an alias whose backend mise cannot report", tool: "node-lts", owner: "manual" },
-  ] as const)(
-    "decides a node_modules binary under $name by mise's backend",
-    ({ tool, owner, ...fixture }) =>
+  it.effect.each(
+    (["standard", "custom"] as const).flatMap((root) =>
+      (
+        [
+          {
+            name: "an alias for mise's Node",
+            tool: "node-lts",
+            backend: "core:node",
+            owner: "npm",
+          },
+          {
+            name: "an alias for an npm backend",
+            tool: "claude",
+            backend: "npm:@anthropic-ai/claude-code",
+            owner: "mise",
+          },
+          {
+            name: "an alias whose backend mise cannot report",
+            tool: "node-lts",
+            backend: null,
+            owner: "manual",
+          },
+        ] as const
+      ).map((fixture) => ({ ...fixture, root })),
+    ),
+  )(
+    "decides a node_modules binary under $name in the $root data root by mise's backend",
+    ({ tool, owner, backend, root: rootKind }) =>
       Effect.gen(function* () {
-        const { root, dataDir } = makeSandbox();
+        // The standard root's `/mise/installs/` path is the one the npm guard watches.
+        const { root } = makeSandbox("t3 tools ");
+        const dataDir =
+          rootKind === "standard"
+            ? NodePath.join(root, ".local", "share", "mise")
+            : NodePath.join(root, "custom-tools");
         const install = NodePath.join(dataDir, "installs", tool, "24.0.0");
         const entry = NodePath.join(
           install,
@@ -654,7 +675,7 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
           ls: miseListing(tool, install, "24.0.0"),
           // Node's own latest must never be advertised as the provider's.
           outdated: miseOutdated(tool, "24.1.0"),
-          ...("backend" in fixture ? { backends: { [tool]: fixture.backend } } : {}),
+          ...(backend === null ? {} : { backends: { [tool]: backend } }),
         });
         const shimDir = NodePath.join(dataDir, "shims");
         NodeFS.mkdirSync(shimDir, { recursive: true });
@@ -662,7 +683,11 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
           binaryPath: "claude",
-          env: { PATH: shimDir, MISE_DATA_DIR: dataDir },
+          env: {
+            PATH: shimDir,
+            HOME: root,
+            ...(rootKind === "custom" ? { MISE_DATA_DIR: dataDir } : {}),
+          },
         });
 
         expect(fake.calls().map((call) => call.args)).toContain(`tool --backend ${tool}`);

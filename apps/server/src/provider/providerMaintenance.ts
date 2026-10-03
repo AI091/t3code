@@ -258,6 +258,8 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
 export function npmGlobalPrefixFromCommandPath(
   realCommandPath: string,
   packageName: string,
+  /** A Node install mise itself identified, which may carry an alias like `node-lts`. */
+  provenNodePrefix: string | null = null,
 ): string | null {
   const slashPath = realCommandPath.replaceAll("\\", "/");
   const normalized = slashPath.toLowerCase();
@@ -268,11 +270,15 @@ export function npmGlobalPrefixFromCommandPath(
   }
   // Mise's npm backend uses a global-looking layout inside a tool version.
   // Globals under its Node installation still belong to npm.
+  const prefix = packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
   const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(normalized.slice(0, packageIndex))?.[1];
-  if (miseTool && miseTool !== "node") {
+  const isProvenNode =
+    provenNodePrefix !== null &&
+    normalizeCommandPath(provenNodePrefix) === normalizeCommandPath(prefix);
+  if (miseTool && miseTool !== "node" && !isProvenNode) {
     return null;
   }
-  return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
+  return prefix;
 }
 
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
@@ -410,7 +416,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // npm proof names the package, so it outranks a keg the path merely passes
   // through: a Homebrew-installed Node keeps its globals under
   // `Cellar/node/<ver>/lib/node_modules/`, and that is npm's install, not brew's.
-  const npmPrefix = yield* resolveNpmGlobalPrefix(installerContext, packageName);
+  const npmPrefix = yield* resolveNpmGlobalPrefix(
+    installerContext,
+    packageName,
+    mise.provenNodePrefix,
+  );
   if (npmPrefix) {
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
@@ -502,7 +512,7 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     const ownership = yield* resolveMiseOwnership(input.context);
     switch (ownership.kind) {
       case "unrelated":
-        return { kind: "undecided", context: input.context } as const;
+        return { kind: "undecided", context: input.context, provenNodePrefix: null } as const;
       case "npm-global":
         return {
           kind: "undecided",
@@ -511,6 +521,7 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
             resolvedCommandPath: ownership.resolvedCommandPath,
             realCommandPath: ownership.realCommandPath,
           },
+          provenNodePrefix: ownership.provenNodePrefix,
         } as const;
       case "uncertain":
         yield* Effect.logInfo("Provider update is manual-only: mise ownership is uncertain", {
@@ -554,8 +565,13 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
+  provenNodePrefix: string | null,
 ) {
-  const fromRealPath = npmGlobalPrefixFromCommandPath(context.realCommandPath, packageName);
+  const fromRealPath = npmGlobalPrefixFromCommandPath(
+    context.realCommandPath,
+    packageName,
+    provenNodePrefix,
+  );
   if (fromRealPath) {
     return fromRealPath;
   }
