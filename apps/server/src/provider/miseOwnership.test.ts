@@ -28,8 +28,8 @@ const claudeUpdate = makePackageManagedProviderMaintenanceResolver({
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 /** A sandbox whose paths contain spaces, as a user's home or data dir may. */
-function makeSandbox() {
-  const root = NodeFS.mkdtempSync(NodePath.join(NodeFS.realpathSync(NodeOS.tmpdir()), "t3 mise "));
+function makeSandbox(prefix = "t3 mise ") {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeFS.realpathSync(NodeOS.tmpdir()), prefix));
   return { root, dataDir: NodePath.join(root, "mise data") };
 }
 
@@ -39,24 +39,45 @@ function writeScript(path: string, content: string) {
   NodeFS.chmodSync(path, 0o755);
 }
 
-/** `<data>/installs/<dir>/<version>/<bin>` plus mise's `latest` link to it. */
+/**
+ * Install `<data>/installs/<dir>/<version>/<bin>`, a script that prints its
+ * version, and point mise's `latest` link at it, as an install or upgrade does.
+ */
 function installTool(dataDir: string, directory: string, version: string, bin: string) {
   const toolDir = NodePath.join(dataDir, "installs", directory);
-  writeScript(NodePath.join(toolDir, version, bin), "#!/bin/sh\n");
+  writeScript(NodePath.join(toolDir, version, bin), `#!/bin/sh\necho ${version}\n`);
+  NodeFS.rmSync(NodePath.join(toolDir, "latest"), { force: true });
   NodeFS.symlinkSync(version, NodePath.join(toolDir, "latest"));
   return {
+    toolDir,
     installPath: NodePath.join(toolDir, version),
     latestBin: NodePath.join(toolDir, "latest", bin),
   };
+}
+
+function runLauncher(path: string, env: NodeJS.ProcessEnv = {}) {
+  return NodeChildProcess.spawnSync(path, [], {
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+  }).stdout.trim();
 }
 
 function miseListing(
   tool: string,
   installPath: string,
   version: string,
-  options?: { readonly active?: boolean },
+  options?: { readonly active?: boolean; readonly requested?: string },
 ) {
-  return { [tool]: [{ version, install_path: installPath, active: options?.active ?? true }] };
+  return {
+    [tool]: [
+      {
+        version,
+        install_path: installPath,
+        requested_version: options?.requested ?? "latest",
+        active: options?.active ?? true,
+      },
+    ],
+  };
 }
 
 function miseOutdated(tool: string, latest: string) {
@@ -78,6 +99,11 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
     {
       name: "bare words through mise exec",
       execLine: 'exec mise exec claude -- claude "$@"',
+      tool: "claude",
+    },
+    {
+      name: "a moving request that matches mise's config",
+      execLine: 'exec mise x "claude@latest" -- "claude" "$@"',
       tool: "claude",
     },
   ])(
@@ -115,12 +141,14 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
           env,
         });
 
+        // The wrapper's own export reaches mise exactly as it would at launch.
+        const launcherEnv = { ...env, MISE_MINIMUM_RELEASE_AGE: "0" };
         expect(capabilities.update).toEqual({
-          command: `'${fake.misePath}' upgrade ${tool}`,
+          command: `'${fake.misePath}' upgrade --no-prune ${tool}`,
           executable: fake.misePath,
-          args: ["upgrade", tool],
+          args: ["upgrade", "--no-prune", tool],
           lockKey: "mise",
-          env,
+          env: launcherEnv,
         });
         expect(capabilities.latestVersion).toBe("2.1.5");
         expect(fake.calls()).toEqual([
@@ -135,13 +163,13 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
           env: { ...process.env, ...update.env },
         });
         expect(result.status).toBe(0);
-        expect(fake.calls().at(-1)).toEqual({ dataDir, args: `upgrade ${tool}` });
+        expect(fake.calls().at(-1)).toEqual({ dataDir, args: `upgrade --no-prune ${tool}` });
       }),
     { skip: windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(
-    "follows a wrapper that execs a mise shim through a variable to the mise it links to",
+    "follows the patched Omarchy wrapper: conditional setup, then an unconditional exec of a shim",
     () =>
       Effect.gen(function* () {
         const { root, dataDir } = makeSandbox();
@@ -161,25 +189,269 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
             "#!/bin/bash",
             'shim="$HOME/mise data/shims/claude"',
             "if [[ ! -x $shim ]]; then",
+            "  export MISE_MINIMUM_RELEASE_AGE=0",
             '  flock "$HOME/.config/mise/.wrapper.lock" mise use -g "claude" >/dev/null || exit 1',
+            "  [[ -x $shim ]] || mise reshim >/dev/null 2>&1",
             "fi",
             'exec "$shim" "$@"',
             "",
           ].join("\n"),
         );
+        const env = { PATH: "", HOME: root };
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
           binaryPath,
-          env: { PATH: "", HOME: root },
+          env,
         });
 
         expect(capabilities.update).toMatchObject({
           executable: fake.misePath,
-          args: ["upgrade", "claude"],
+          args: ["upgrade", "--no-prune", "claude"],
         });
+        // The release-age export only runs on first install, so it is not carried.
+        expect(capabilities.update?.env).toEqual(env);
         // Up to date within its request: the installed version is the target.
         expect(capabilities.latestVersion).toBe("2.1.0");
       }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "never credits a wrapper with an exec it skips, the review's conditional launcher",
+    () =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const claude = installTool(dataDir, "claude", "2.1.0", "bin/claude");
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
+          which: { claude: claude.latestBin },
+          ls: miseListing("claude", claude.installPath, "2.1.0"),
+          outdated: {},
+        });
+        const shim = NodePath.join(dataDir, "shims", "claude");
+        NodeFS.mkdirSync(NodePath.dirname(shim), { recursive: true });
+        NodeFS.symlinkSync(fake.misePath, shim);
+        const wrapper = NodePath.join(root, "wrapper", "claude");
+        writeScript(
+          wrapper,
+          `#!/bin/sh\nif false; then\n  exec '${shim}' "$@"\nfi\nprintf unrelated\n`,
+        );
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: wrapper,
+          env: { PATH: "" },
+        });
+
+        expect(runLauncher(wrapper)).toBe("unrelated");
+        expect(capabilities.update).toBeNull();
+        expect(fake.calls()).toEqual([]);
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "only a commented-out line mentions mise",
+      script: '#!/bin/sh\n# exec mise x "claude" -- "claude" "$@"\nexec /bin/sh "$@"\n',
+    },
+    {
+      name: "the exec sits inside a branch",
+      script: '#!/bin/sh\nif [ -n "$X" ]; then exec mise x claude -- claude "$@"; fi\n',
+    },
+    {
+      name: "a branch may launch something else and exit first",
+      script:
+        '#!/bin/sh\nif [ -n "$X" ]; then\n  other "$@"\n  exit\nfi\nexec mise x claude -- claude "$@"\n',
+    },
+    {
+      name: "an unconditional exit comes first",
+      script: '#!/bin/sh\nexit 0\nexec mise x claude -- claude "$@"\n',
+    },
+    {
+      name: "the exec'd variable is only assigned on some runs",
+      script:
+        '#!/bin/sh\nshim=/usr/bin/true\nif [ -n "$X" ]; then\n  shim="$HOME/shims/claude"\nfi\nexec "$shim" "$@"\n',
+    },
+    {
+      name: "mise runs a script rather than the tool's own binary",
+      script: '#!/bin/sh\nexec mise x node -- node "$HOME/cli.js" "$@"\n',
+    },
+    {
+      name: "the exec line uses shell features",
+      script: '#!/bin/sh\nexec mise x "$(pick-tool)" -- claude "$@"\n',
+    },
+    {
+      name: "the launcher sources another file",
+      script: '#!/bin/sh\n. "$HOME/env"\nexec mise x claude -- claude "$@"\n',
+    },
+  ])(
+    "never runs mise when $name",
+    ({ script }) =>
+      Effect.gen(function* () {
+        const { root } = makeSandbox();
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {});
+        const wrapper = NodePath.join(root, "wrapper", "claude");
+        writeScript(wrapper, script);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: wrapper,
+          env: { PATH: NodePath.dirname(fake.misePath), HOME: root },
+        });
+
+        expect(capabilities.update).toBeNull();
+        expect(fake.calls()).toEqual([]);
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "probes and upgrades the data root a wrapper selects, not the server's",
+    () =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const wrapperRoot = NodePath.join(root, "wrapper root");
+        const claude = installTool(wrapperRoot, "claude", "2.1.0", "bin/claude");
+        // Only the PATH the wrapper sets leads to this mise.
+        const fake = installFakeMise(NodePath.join(root, "wrapper bin", "mise"), {
+          which: { claude: claude.latestBin },
+          ls: miseListing("claude", claude.installPath, "2.1.0"),
+          outdated: miseOutdated("claude", "2.1.5"),
+        });
+        const wrapper = NodePath.join(root, "wrapper", "claude");
+        writeScript(
+          wrapper,
+          [
+            "#!/bin/sh",
+            'MISE_DATA_DIR="$HOME/wrapper root"',
+            "export MISE_DATA_DIR",
+            'export PATH="$HOME/wrapper bin:$PATH"',
+            'exec mise x claude -- claude "$@"',
+            "",
+          ].join("\n"),
+        );
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: wrapper,
+          env: { PATH: "/usr/bin:/bin", HOME: root, MISE_DATA_DIR: dataDir },
+        });
+
+        expect(capabilities.update).toMatchObject({
+          executable: fake.misePath,
+          args: ["upgrade", "--no-prune", "claude"],
+          env: { MISE_DATA_DIR: wrapperRoot },
+        });
+        expect(fake.calls().map((call) => call.dataDir)).toEqual([
+          wrapperRoot,
+          wrapperRoot,
+          wrapperRoot,
+        ]);
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "changes the data root on only some runs",
+      setup: 'if [ -n "$X" ]; then\n  export MISE_DATA_DIR=/elsewhere\nfi',
+    },
+    { name: "changes directory", setup: 'cd "$HOME/project"' },
+    { name: "sets the data root from a command", setup: "export MISE_DATA_DIR=$(pick-root)" },
+    { name: "sets the config root to an unknown value", setup: 'export MISE_CONFIG_DIR="$NOPE"' },
+  ])(
+    "stays manual-only without probing when the wrapper $name",
+    ({ setup }) =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const claude = installTool(dataDir, "claude", "2.1.0", "bin/claude");
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
+          which: { claude: claude.latestBin },
+          ls: miseListing("claude", claude.installPath, "2.1.0"),
+          outdated: {},
+        });
+        const wrapper = NodePath.join(root, "wrapper", "claude");
+        writeScript(wrapper, `#!/bin/sh\n${setup}\nexec mise x claude -- claude "$@"\n`);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: wrapper,
+          env: { PATH: NodePath.dirname(fake.misePath), HOME: root, MISE_DATA_DIR: dataDir },
+        });
+
+        expect(capabilities.update).toBeNull();
+        expect(fake.calls()).toEqual([]);
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.each([
+    { name: "a fixed version in the wrapper", spec: "claude@2.0.0", requested: "latest" },
+    { name: "a request mise's config does not make", spec: "claude@2", requested: "latest" },
+    { name: "a different tool", spec: "npm:other", requested: "latest" },
+  ])(
+    "stays manual-only when the wrapper runs $name",
+    ({ spec, requested }) =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const claude = installTool(dataDir, "claude", "2.1.0", "bin/claude");
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
+          which: { claude: claude.latestBin },
+          ls: miseListing("claude", claude.installPath, "2.1.0", { requested }),
+          outdated: {},
+        });
+        const wrapper = NodePath.join(root, "wrapper", "claude");
+        writeScript(wrapper, `#!/bin/sh\nexec mise x "${spec}" -- "claude" "$@"\n`);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: wrapper,
+          env: { PATH: NodePath.dirname(fake.misePath) },
+        });
+
+        expect(capabilities.update).toBeNull();
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.each([
+    { name: "a link to mise's latest", link: "latest", target: "2.1.5", follows: true },
+    { name: "a range link the upgrade stays in", link: "2.1", target: "2.1.5", follows: true },
+    { name: "a range link the upgrade leaves", link: "2.1", target: "2.2.0", follows: false },
+    { name: "a link straight into a version", link: "2.1.0", target: "2.1.5", follows: false },
+  ])(
+    "offers an update through $name only when the launch follows it",
+    ({ link, target, follows }) =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const claude = installTool(dataDir, "claude", "2.1.0", "bin/claude");
+        if (link === "2.1") NodeFS.symlinkSync("2.1.0", NodePath.join(claude.toolDir, "2.1"));
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
+          ls: miseListing("claude", claude.installPath, "2.1.0"),
+          outdated: miseOutdated("claude", target),
+        });
+        const launchers = {
+          link: NodePath.join(root, "links", "claude"),
+          wrapper: NodePath.join(root, "wrapper", "claude"),
+        };
+        NodeFS.mkdirSync(NodePath.dirname(launchers.link));
+        NodeFS.symlinkSync(NodePath.join(claude.toolDir, link, "bin", "claude"), launchers.link);
+        writeScript(launchers.wrapper, `#!/bin/sh\nexec '${launchers.link}' "$@"\n`);
+        const env = { PATH: NodePath.dirname(fake.misePath), MISE_DATA_DIR: dataDir };
+
+        for (const launcher of Object.values(launchers)) {
+          const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+            binaryPath: launcher,
+            env,
+          });
+          expect(capabilities.update?.args ?? null).toEqual(
+            follows ? ["upgrade", "--no-prune", "claude"] : null,
+          );
+        }
+
+        // What mise does on upgrade: install the target, move `latest` and the range link.
+        installTool(dataDir, "claude", target, "bin/claude");
+        if (link === "2.1" && target.startsWith("2.1.")) {
+          NodeFS.rmSync(NodePath.join(claude.toolDir, "2.1"));
+          NodeFS.symlinkSync(target, NodePath.join(claude.toolDir, "2.1"));
+        }
+        for (const launcher of Object.values(launchers)) {
+          expect(runLauncher(launcher)).toBe(follows ? target : "2.1.0");
+        }
+      }),
+    { skip: windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(
@@ -196,7 +468,7 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
         );
         // `mise outdated` omits a tool pinned to its installed version.
         const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
-          ls: miseListing(tool, claude.installPath, "2.1.0"),
+          ls: miseListing(tool, claude.installPath, "2.1.0", { requested: "2.1.0" }),
           outdated: {},
         });
         const binaryPath = NodePath.join(root, "links", "claude");
@@ -208,7 +480,7 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
           env: { PATH: NodePath.dirname(fake.misePath), MISE_DATA_DIR: dataDir },
         });
 
-        expect(capabilities.update?.args).toEqual(["upgrade", tool]);
+        expect(capabilities.update?.args).toEqual(["upgrade", "--no-prune", tool]);
         expect(
           createProviderVersionAdvisory({
             driver: CLAUDE,
@@ -220,11 +492,49 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "keeps npm updates for a global that mise's Node runs through a shim",
-    () =>
+  it.effect.each([
+    { name: "no mise is on PATH", mise: "missing" },
+    { name: "`mise ls` fails", mise: "failing" },
+    { name: "`mise ls` prints invalid JSON", mise: "invalid" },
+  ] as const)(
+    "keeps a mise npm backend in a custom data root from npm when $name",
+    ({ mise }) =>
       Effect.gen(function* () {
-        const { root, dataDir } = makeSandbox();
+        const { root } = makeSandbox("t3 tools ");
+        const dataDir = NodePath.join(root, "custom-tools");
+        const claude = installTool(
+          dataDir,
+          "npm-anthropic-ai-claude-code",
+          "1.0.0",
+          "lib/node_modules/@anthropic-ai/claude-code/cli.js",
+        );
+        const fake = installFakeMise(
+          NodePath.join(root, "bin", "mise"),
+          mise === "invalid" ? { ls: "not json" } : {},
+        );
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: claude.latestBin,
+          env: {
+            PATH: mise === "missing" ? "" : NodePath.dirname(fake.misePath),
+            MISE_DATA_DIR: dataDir,
+          },
+        });
+
+        expect(capabilities.update).toBeNull();
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.each([
+    { name: "through a shim, as mise reports it", via: "shim" },
+    { name: "directly, when mise cannot list its installs", via: "path" },
+  ] as const)(
+    "keeps npm updates for a global under mise's Node $name",
+    ({ via }) =>
+      Effect.gen(function* () {
+        const { root } = makeSandbox("t3 tools ");
+        const dataDir = NodePath.join(root, "custom-tools");
         const node = NodePath.join(dataDir, "installs", "node", "24.0.0");
         const entry = NodePath.join(
           node,
@@ -237,27 +547,38 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
         writeScript(entry, "#!/bin/sh\n");
         NodeFS.mkdirSync(NodePath.join(node, "bin"));
         NodeFS.symlinkSync(entry, NodePath.join(node, "bin", "claude"));
-        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
-          which: { claude: NodePath.join(node, "bin", "claude") },
-          ls: miseListing("node", node, "24.0.0"),
-        });
-        NodeFS.mkdirSync(NodePath.join(dataDir, "shims"), { recursive: true });
-        NodeFS.symlinkSync(fake.misePath, NodePath.join(dataDir, "shims", "claude"));
+        const fake = installFakeMise(
+          NodePath.join(root, "bin", "mise"),
+          via === "shim"
+            ? {
+                which: { claude: NodePath.join(node, "bin", "claude") },
+                ls: miseListing("node", node, "24.0.0"),
+              }
+            : {},
+        );
+        const shimDir = NodePath.join(dataDir, "shims");
+        NodeFS.mkdirSync(shimDir, { recursive: true });
+        NodeFS.symlinkSync(fake.misePath, NodePath.join(shimDir, "claude"));
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
           binaryPath: "claude",
-          env: { PATH: NodePath.join(dataDir, "shims"), MISE_DATA_DIR: dataDir },
+          env: {
+            PATH:
+              via === "shim"
+                ? shimDir
+                : [NodePath.join(node, "bin"), NodePath.dirname(fake.misePath)].join(
+                    NodePath.delimiter,
+                  ),
+            MISE_DATA_DIR: dataDir,
+          },
         });
 
         expect(capabilities.update).toMatchObject({
           executable: "npm",
           args: expect.arrayContaining(["--prefix", node, "@anthropic-ai/claude-code@latest"]),
         });
-        expect(fake.calls().map((call) => call.args)).toEqual([
-          "which claude",
-          "ls --installed --json",
-        ]);
       }),
+    { skip: windowsHost },
   );
 
   it.effect.each([
@@ -321,65 +642,6 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
     { skip: windowsHost },
   );
 
-  it.effect.skipIf(windowsHost)(
-    "stays manual-only when a wrapper runs a different tool than mise resolves",
-    () =>
-      Effect.gen(function* () {
-        const { root, dataDir } = makeSandbox();
-        const claude = installTool(dataDir, "claude", "2.1.0", "bin/claude");
-        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
-          which: { claude: claude.latestBin },
-          ls: miseListing("claude", claude.installPath, "2.1.0"),
-        });
-        const wrapper = NodePath.join(root, "wrapper", "claude");
-        writeScript(wrapper, '#!/bin/sh\nexec mise x "npm:other" -- "claude" "$@"\n');
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
-          binaryPath: wrapper,
-          env: { PATH: NodePath.dirname(fake.misePath) },
-        });
-
-        expect(capabilities.update).toBeNull();
-      }),
-  );
-
-  it.effect.each([
-    {
-      name: "only a commented-out line mentions mise",
-      script: '#!/bin/sh\n# exec mise x "claude" -- "claude" "$@"\nexec /bin/sh "$@"\n',
-    },
-    {
-      name: "the wrapper pins a version",
-      script: '#!/bin/sh\nexec mise x "claude@2.0.0" -- "claude" "$@"\n',
-    },
-    {
-      name: "mise runs a script rather than the tool's own binary",
-      script: '#!/bin/sh\nexec mise x node -- node "$HOME/cli.js" "$@"\n',
-    },
-    {
-      name: "the exec line uses shell features",
-      script: '#!/bin/sh\nexec mise x "$(pick-tool)" -- claude "$@"\n',
-    },
-  ])(
-    "never runs mise when $name",
-    ({ script }) =>
-      Effect.gen(function* () {
-        const { root } = makeSandbox();
-        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {});
-        const wrapper = NodePath.join(root, "wrapper", "claude");
-        writeScript(wrapper, script);
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
-          binaryPath: wrapper,
-          env: { PATH: NodePath.dirname(fake.misePath), HOME: root },
-        });
-
-        expect(capabilities.update).toBeNull();
-        expect(fake.calls()).toEqual([]);
-      }),
-    { skip: windowsHost },
-  );
-
   it.effect.skipIf(windowsHost)("leaves installs mise does not report to other installers", () =>
     Effect.gen(function* () {
       const { root } = makeSandbox();
@@ -398,7 +660,7 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
         binaryPath: entry,
-        env: { PATH: NodePath.dirname(fake.misePath) },
+        env: { PATH: NodePath.dirname(fake.misePath), HOME: root },
       });
 
       expect(capabilities.update).toMatchObject({
@@ -434,7 +696,7 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
 
       expect(capabilities.update).toMatchObject({
         executable: fake.misePath,
-        args: ["upgrade", "claude"],
+        args: ["upgrade", "--no-prune", "claude"],
       });
       expect(capabilities.latestVersion).toBe("2.1.5");
     }),

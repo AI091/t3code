@@ -120,7 +120,7 @@ it.layer(testLayer)("GrokDriver", (it) => {
         const capabilities = yield* instance.snapshot.resolveMaintenance();
         expect(capabilities.update).toMatchObject({
           executable: fake.misePath,
-          args: ["upgrade", tool],
+          args: ["upgrade", "--no-prune", tool],
         });
         expect(capabilities.latestVersion).toBe("1.1.0");
       }).pipe(Effect.scoped),

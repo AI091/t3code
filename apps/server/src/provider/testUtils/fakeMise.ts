@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 interface FakeMiseInstall {
   readonly version: string;
   readonly install_path: string;
+  readonly requested_version?: string;
   readonly active: boolean;
 }
 

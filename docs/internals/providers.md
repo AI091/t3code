@@ -78,13 +78,17 @@ it. Homebrew and npm are proven by the real path (symlinks followed): a versione
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
 Native installer layouts and the global bin directories of pnpm, Bun, and Vite+ may match on either
 the resolved path or its real target, since those installers place real files or their own symlinks
-there. Mise is proven by mise itself: a shim, an `installs/` path, or a launcher script whose single
-`exec` runs one of those or `mise x <tool> -- <bin>` (Omarchy's `~/.local/bin` wrappers) leads to
-`mise which` and `mise ls --json`, and the install containing the real binary names the tool. The
-update is `mise upgrade <tool>` without `--bump`, so it stays within the configured version request,
-and `mise outdated` supplies the newest version that request reaches: an exact pin reads as current
-instead of advertising an update the button cannot install. A binary in a fixed version directory
-(what `mise activate` puts on `PATH`) stays manual-only, since an upgrade installs beside it.
+there. Mise is proven by mise itself: a shim, an `installs/` path, or a launcher script leads to
+`mise which` and `mise ls --json`, and the install containing the real binary names the tool. A
+launcher (Omarchy's `~/.local/bin` wrappers) counts only through its unconditional top-level
+`exec`; probes and the upgrade run with the environment it exports, and a launcher that changes
+directory or changes mise's environment on only some runs stays manual-only. The update is
+`mise upgrade --no-prune <tool>`: no `--bump`, so it stays within the configured version request,
+and no pruning, so a running provider keeps its install. `mise outdated` supplies the newest
+version that request reaches, so an exact pin reads as current. A launch path that reaches a fixed
+version directory instead of a selector link such as `latest` stays manual-only, since an upgrade
+installs beside it. A path inside this environment's mise installs that mise cannot attribute stays
+manual-only rather than falling to npm, except globals under mise's Node.
 Grok's only updater is the CLI itself, which detects its own installer, so any resolved executable
 that mise does not own runs `<binary> update`. Anything unproven stays manual-only but still
 reports the version gap. npm updates pin

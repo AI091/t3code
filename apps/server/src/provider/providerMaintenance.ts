@@ -533,10 +533,12 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
             updateExecutable: ownership.executable,
             // No `--bump`: mise stays within the version the user's config
             // requests and never rewrites a project or global pin.
-            updateArgs: ["upgrade", ownership.tool],
+            // `--no-prune`: a running provider or another link may still use
+            // the old install, so it must not be removed or scheduled for it.
+            updateArgs: ["upgrade", "--no-prune", ownership.tool],
             updateLockKey: "mise",
             platform: input.context.platform,
-            env: input.context.env,
+            env: ownership.env,
             latestVersion: ownership.latestVersion,
           }),
         } as const;

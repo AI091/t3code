@@ -111,7 +111,10 @@ it.layer(testLayer)("ClaudeDriver", (it) => {
         if (expected === "claude-update") {
           expect(update).toMatchObject({ executable: binaryPath, args: ["update"] });
         } else if (expected === "mise-upgrade") {
-          expect(update).toMatchObject({ executable: fake.misePath, args: ["upgrade", "claude"] });
+          expect(update).toMatchObject({
+            executable: fake.misePath,
+            args: ["upgrade", "--no-prune", "claude"],
+          });
         } else {
           // `claude update` would only report that a package manager owns it.
           expect(update).toBeNull();
