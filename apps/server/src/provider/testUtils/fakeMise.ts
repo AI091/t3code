@@ -16,7 +16,7 @@ export interface FakeMiseCall {
 
 /**
  * A POSIX `mise` stand-in for maintenance tests. It answers `which <bin>`,
- * `ls`, and `outdated` with the given JSON, or raw text when given a string
+ * `ls`, `outdated`, and `tool --backend` with the given JSON, or raw text when given a string
  * (a missing answer exits 1), and
  * records each call with the `MISE_DATA_DIR` it ran with, so a test proves
  * which mise ran, with which arguments, in which environment.
@@ -27,6 +27,8 @@ export function installFakeMise(
     readonly which?: Readonly<Record<string, string>>;
     readonly ls?: string | Readonly<Record<string, ReadonlyArray<FakeMiseInstall>>>;
     readonly outdated?: string | Readonly<Record<string, { readonly latest: string }>>;
+    /** `mise tool --backend <tool>` answers, by tool name. */
+    readonly backends?: Readonly<Record<string, string>>;
   },
 ) {
   const stateDir = `${misePath}.state`;
@@ -34,6 +36,9 @@ export function installFakeMise(
   NodeFS.mkdirSync(stateDir, { recursive: true });
   for (const [bin, path] of Object.entries(answers.which ?? {})) {
     NodeFS.writeFileSync(NodePath.join(stateDir, `which-${bin}`), `${path}\n`);
+  }
+  for (const [tool, backend] of Object.entries(answers.backends ?? {})) {
+    NodeFS.writeFileSync(NodePath.join(stateDir, `backend-${tool}`), `${backend}\n`);
   }
   for (const [name, answer] of [
     ["ls", answers.ls],
@@ -57,6 +62,7 @@ export function installFakeMise(
       // `which [--tool <spec>] <bin>`: the bin is the last argument.
       '  which) for bin; do :; done; answer="$state/which-$bin" ;;',
       '  ls) answer="$state/ls" ;;',
+      '  tool) for tool; do :; done; answer="$state/backend-$tool" ;;',
       '  outdated) answer="$state/outdated" ;;',
       "  upgrade) exit 0 ;;",
       "  *) exit 2 ;;",

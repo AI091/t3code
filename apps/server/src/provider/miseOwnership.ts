@@ -720,12 +720,31 @@ const findOwningTool = Effect.fn("findOwningMiseTool")(function* (input: {
       const relativeBinPath = pathBelow(installPath, input.realBinPath, input.platform);
       if (relativeBinPath === null) continue;
 
-      if (/^(?:core:)?node(?:js)?$/.test(tool) && relativeBinPath.includes("node_modules/")) {
-        return {
-          kind: "npm-global",
-          resolvedCommandPath: input.binPath,
-          realCommandPath: input.realBinPath,
-        } satisfies MiseOwnership;
+      // A binary inside node_modules is either the package an npm backend
+      // installed or an npm global under a Node install, whatever the tool's
+      // alias. Only mise's own backend name tells them apart.
+      if (relativeBinPath.includes("node_modules/") && !tool.startsWith("npm:")) {
+        const backend = isNodeBackend(tool)
+          ? tool
+          : (yield* runInstallerProbe({
+              executable: input.executable,
+              args: ["tool", "--backend", tool],
+              env: input.env,
+              timeout: MISE_PROBE_TIMEOUT,
+              maxBytes: MISE_PROBE_MAX_BYTES,
+            }))?.trim();
+        if (backend && isNodeBackend(backend)) {
+          return {
+            kind: "npm-global",
+            resolvedCommandPath: input.binPath,
+            realCommandPath: input.realBinPath,
+          } satisfies MiseOwnership;
+        }
+        if (!backend?.startsWith("npm:")) {
+          return uncertain(
+            `${tool} holds the binary inside node_modules, but mise did not show that its backend (${backend || "unknown"}) is the provider's npm package rather than a Node install.`,
+          );
+        }
       }
       if (input.spec && input.spec.tool !== tool) {
         return uncertain(
@@ -835,6 +854,11 @@ const findInstallEntry = Effect.fn("findInstallEntry")(function* (input: {
   }
   return null;
 });
+
+/** `node`, `core:node`, or a plugin backend for Node such as `asdf:nodejs`. */
+function isNodeBackend(backend: string): boolean {
+  return /(?:^|[:/])node(?:js)?$/.test(backend);
+}
 
 /**
  * Every spelling of `start` while its symlinks resolve, one link at a time

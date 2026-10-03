@@ -624,6 +624,64 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
   );
 
   it.effect.each([
+    { name: "an alias for mise's Node", tool: "node-lts", backend: "core:node", owner: "npm" },
+    {
+      name: "an alias for an npm backend",
+      tool: "claude",
+      backend: "npm:@anthropic-ai/claude-code",
+      owner: "mise",
+    },
+    { name: "an alias whose backend mise cannot report", tool: "node-lts", owner: "manual" },
+  ] as const)(
+    "decides a node_modules binary under $name by mise's backend",
+    ({ tool, owner, ...fixture }) =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const install = NodePath.join(dataDir, "installs", tool, "24.0.0");
+        const entry = NodePath.join(
+          install,
+          "lib",
+          "node_modules",
+          "@anthropic-ai",
+          "claude-code",
+          "cli.js",
+        );
+        writeScript(entry, "#!/bin/sh\n");
+        NodeFS.mkdirSync(NodePath.join(install, "bin"));
+        NodeFS.symlinkSync(entry, NodePath.join(install, "bin", "claude"));
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
+          which: { claude: NodePath.join(install, "bin", "claude") },
+          ls: miseListing(tool, install, "24.0.0"),
+          // Node's own latest must never be advertised as the provider's.
+          outdated: miseOutdated(tool, "24.1.0"),
+          ...("backend" in fixture ? { backends: { [tool]: fixture.backend } } : {}),
+        });
+        const shimDir = NodePath.join(dataDir, "shims");
+        NodeFS.mkdirSync(shimDir, { recursive: true });
+        NodeFS.symlinkSync(fake.misePath, NodePath.join(shimDir, "claude"));
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: "claude",
+          env: { PATH: shimDir, MISE_DATA_DIR: dataDir },
+        });
+
+        expect(fake.calls().map((call) => call.args)).toContain(`tool --backend ${tool}`);
+        if (owner === "npm") {
+          expect(capabilities.update).toMatchObject({
+            executable: "npm",
+            args: expect.arrayContaining(["--prefix", install, "@anthropic-ai/claude-code@latest"]),
+          });
+        } else if (owner === "mise") {
+          expect(capabilities.update?.args).toEqual(["upgrade", "--no-prune", tool]);
+          expect(capabilities.latestVersion).toBe("24.1.0");
+        } else {
+          expect(capabilities.update).toBeNull();
+        }
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.each([
     {
       name: "a version directory `mise activate` put on PATH",
       launch: "version-directory",
