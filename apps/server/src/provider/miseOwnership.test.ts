@@ -105,10 +105,11 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
       name: "a moving request that matches mise's config",
       execLine: 'exec mise x "claude@latest" -- "claude" "$@"',
       tool: "claude",
+      which: "which --tool claude@latest claude",
     },
   ])(
     "upgrades the tool an Omarchy wrapper runs: $name",
-    ({ execLine, tool }) =>
+    ({ execLine, tool, which = "which claude" }) =>
       Effect.gen(function* () {
         const { root, dataDir } = makeSandbox();
         const claude = installTool(dataDir, "claude", "2.1.0", "bin/claude");
@@ -152,7 +153,7 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
         });
         expect(capabilities.latestVersion).toBe("2.1.5");
         expect(fake.calls()).toEqual([
-          { dataDir, args: "which claude" },
+          { dataDir, args: which },
           { dataDir, args: "ls --installed --json" },
           { dataDir, args: `outdated --json ${tool}` },
         ]);
@@ -376,6 +377,47 @@ it.layer(NodeServices.layer)("mise provider ownership", (it) => {
         expect(fake.calls()).toEqual([]);
       }),
     { skip: windowsHost },
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "upgrades a wrapper's explicit @latest without touching the config's pin",
+    () =>
+      Effect.gen(function* () {
+        const { root, dataDir } = makeSandbox();
+        const pinned = installTool(dataDir, "claude", "2.1.0", "bin/claude");
+        const explicit = installTool(dataDir, "claude", "2.1.5", "bin/claude");
+        // mise lists the explicit selection's install as inactive: the config selects 2.1.0.
+        const fake = installFakeMise(NodePath.join(root, "bin", "mise"), {
+          which: { claude: explicit.latestBin },
+          ls: {
+            claude: [
+              {
+                version: "2.1.0",
+                install_path: pinned.installPath,
+                requested_version: "2.1.0",
+                active: true,
+              },
+              { version: "2.1.5", install_path: explicit.installPath, active: false },
+            ],
+          },
+          outdated: miseOutdated("claude", "2.2.0"),
+        });
+        const wrapper = NodePath.join(root, "wrapper", "claude");
+        writeScript(wrapper, '#!/bin/sh\nexec mise x "claude@latest" -- "claude" "$@"\n');
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(claudeUpdate, {
+          binaryPath: wrapper,
+          env: { PATH: NodePath.dirname(fake.misePath), MISE_DATA_DIR: dataDir },
+        });
+
+        expect(capabilities.update?.args).toEqual(["upgrade", "--no-prune", "claude@latest"]);
+        expect(capabilities.latestVersion).toBe("2.2.0");
+        expect(fake.calls().map((call) => call.args)).toEqual([
+          "which --tool claude@latest claude",
+          "ls --installed --json",
+          "outdated --json claude@latest",
+        ]);
+      }),
   );
 
   it.effect.each([

@@ -54,7 +54,8 @@ export function installFakeMise(
       `state='${stateDir}'`,
       `printf '%s\\t%s\\n' "\${MISE_DATA_DIR:-}" "$*" >> "$state/calls"`,
       'case "$1" in',
-      '  which) answer="$state/which-$2" ;;',
+      // `which [--tool <spec>] <bin>`: the bin is the last argument.
+      '  which) for bin; do :; done; answer="$state/which-$bin" ;;',
       '  ls) answer="$state/ls" ;;',
       '  outdated) answer="$state/outdated" ;;',
       "  upgrade) exit 0 ;;",

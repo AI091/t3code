@@ -85,7 +85,9 @@ launcher (Omarchy's `~/.local/bin` wrappers) counts only through its uncondition
 directory or changes mise's environment on only some runs stays manual-only. The update is
 `mise upgrade --no-prune <tool>`: no `--bump`, so it stays within the configured version request,
 and no pruning, so a running provider keeps its install. `mise outdated` supplies the newest
-version that request reaches, so an exact pin reads as current. A launch path that reaches a fixed
+version that request reaches, so an exact pin reads as current. A launcher's `mise x <tool>@latest`
+is its own selection: it is resolved with `mise which --tool` and upgraded as `<tool>@latest`,
+leaving the config's request alone; other explicit requests must match the config's. A launch path that reaches a fixed
 version directory instead of a selector link such as `latest` stays manual-only, since an upgrade
 installs beside it. A path inside this environment's mise installs that mise cannot attribute stays
 manual-only rather than falling to npm, except globals under mise's Node.
@@ -101,7 +103,9 @@ See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
 changed since the advisory, and reports success only when the refreshed provider is still installed
-with a readable, current version.
+with a readable, current version. When the installer reported its own target (mise, Homebrew), the
+refreshed version must reach the target read just before the command; installer metadata that
+drops out afterwards cannot turn an unchanged version into success.
 
 ## Protocol traps
 

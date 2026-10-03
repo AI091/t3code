@@ -535,7 +535,7 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
             // requests and never rewrites a project or global pin.
             // `--no-prune`: a running provider or another link may still use
             // the old install, so it must not be removed or scheduled for it.
-            updateArgs: ["upgrade", "--no-prune", ownership.tool],
+            updateArgs: ["upgrade", "--no-prune", ownership.selection],
             updateLockKey: "mise",
             platform: input.context.platform,
             env: ownership.env,

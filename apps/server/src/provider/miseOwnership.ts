@@ -34,8 +34,12 @@ export type MiseOwnership =
       readonly executable: string;
       /** The environment the provider's launcher gives mise; the upgrade runs in it too. */
       readonly env: NodeJS.ProcessEnv;
-      /** The tool as mise's config names it, alias or backend spec, for `mise upgrade`. */
-      readonly tool: string;
+      /**
+       * What `mise upgrade` and `mise outdated` take: the tool as mise's config
+       * names it (alias or backend spec), or `<tool>@latest` for a launcher
+       * that runs that explicit selection instead of the configured one.
+       */
+      readonly selection: string;
       /** Newest version `mise upgrade` installs within the configured request. */
       readonly latestVersion: string | null;
     };
@@ -121,9 +125,12 @@ export const resolveMiseOwnership = Effect.fn("resolveMiseOwnership")(function* 
       if (!executable) {
         return uncertain(`\`${launch.bin}\` runs through mise, but no mise executable is on PATH.`);
       }
+      const spec = launch.spec === null ? null : splitToolSpec(launch.spec);
+      // `which --tool` resolves the launcher's own selection without
+      // installing it, which `mise exec` would do.
       const binPath = (yield* runInstallerProbe({
         executable,
-        args: ["which", launch.bin],
+        args: spec?.version ? ["which", "--tool", launch.spec!, launch.bin] : ["which", launch.bin],
         env: launch.env,
         timeout: MISE_PROBE_TIMEOUT,
         maxBytes: MISE_PROBE_MAX_BYTES,
@@ -146,7 +153,7 @@ export const resolveMiseOwnership = Effect.fn("resolveMiseOwnership")(function* 
         launchPath: null,
         binPath,
         realBinPath,
-        spec: launch.spec === null ? null : splitToolSpec(launch.spec),
+        spec,
       });
       return (
         owner ??
@@ -719,23 +726,32 @@ const findOwningTool = Effect.fn("findOwningMiseTool")(function* (input: {
           realCommandPath: input.realBinPath,
         } satisfies MiseOwnership;
       }
-      if (!install.active) {
-        return uncertain(
-          `${tool}@${install.version} is installed by mise, but mise's config does not select it, so \`mise upgrade\` would not change it.`,
-        );
-      }
       if (input.spec && input.spec.tool !== tool) {
         return uncertain(
           `The launcher runs ${input.spec.tool}, but mise resolves the binary from ${tool}.`,
         );
       }
-      // `mise exec tool@request` only selects what `mise upgrade` moves when
-      // the request is the one mise's config makes.
-      if (input.spec?.version && input.spec.version !== install.requested_version) {
+      // A launcher's `tool@latest` is its own selection: `mise upgrade
+      // tool@latest` moves it and leaves the config's request alone. Any other
+      // request is only what `mise upgrade` moves when the config makes it.
+      const requestedVersion = input.spec?.version ?? null;
+      const explicitLatest =
+        requestedVersion === "latest" && install.requested_version !== "latest";
+      if (
+        requestedVersion !== null &&
+        !explicitLatest &&
+        requestedVersion !== install.requested_version
+      ) {
         return uncertain(
-          `The launcher runs ${tool}@${input.spec.version}, but mise's config requests ${tool}@${install.requested_version ?? "nothing"}.`,
+          `The launcher runs ${tool}@${requestedVersion}, but mise's config requests ${tool}@${install.requested_version ?? "nothing"}.`,
         );
       }
+      if (!explicitLatest && !install.active) {
+        return uncertain(
+          `${tool}@${install.version} is installed by mise, but mise's config does not select it, so \`mise upgrade\` would not change it.`,
+        );
+      }
+      const selection = explicitLatest ? `${tool}@latest` : tool;
       const entry =
         input.launchPath === null
           ? null
@@ -752,13 +768,13 @@ const findOwningTool = Effect.fn("findOwningMiseTool")(function* (input: {
 
       const outdated = yield* runInstallerProbe({
         executable: input.executable,
-        args: ["outdated", "--json", tool],
+        args: ["outdated", "--json", selection],
         env: input.env,
         timeout: MISE_OUTDATED_TIMEOUT,
         maxBytes: MISE_PROBE_MAX_BYTES,
       });
-      // `outdated` lists only tools behind their configured request, so a
-      // missing entry means the active version is all `mise upgrade` reaches.
+      // `outdated` lists only tools behind their request, keyed by tool, so a
+      // missing entry means the installed version is all `mise upgrade` reaches.
       // That is what keeps an exact pin from advertising an unreachable update.
       const latestVersion =
         outdated === null
@@ -783,7 +799,7 @@ const findOwningTool = Effect.fn("findOwningMiseTool")(function* (input: {
         kind: "tool",
         executable: input.executable,
         env: input.env,
-        tool,
+        selection,
         latestVersion,
       } satisfies MiseOwnership;
     }
