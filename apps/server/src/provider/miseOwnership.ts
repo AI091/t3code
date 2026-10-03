@@ -550,7 +550,8 @@ function recordLauncherWrite(
   const value = expandShellWord(raw!, state);
   // A plain assignment to a variable already in the environment changes what
   // the exec'd process inherits, like `export` does.
-  const reachesChild = options.exported || name! in state.env;
+  const variableName: string = name!;
+  const reachesChild = options.exported || variableName in state.env;
   state.variables.set(name!, value);
   if (!reachesChild || !steersMise(name!)) return;
   if (value === null) {
