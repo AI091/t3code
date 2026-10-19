@@ -242,6 +242,18 @@ describe("legacyLinkedPullRequestOf", () => {
   it("does not guess when the project identity is unavailable", () => {
     expect(legacyLinkedPullRequestOf([link(7)], "project-1" as never, null)).toBeNull();
   });
+  it("does not route links for a local-path remote with no host or provider", () => {
+    const localIdentity = {
+      canonicalKey: "/tmp/r/remote",
+      displayName: "remote",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "/tmp/r/remote.git",
+      },
+    };
+    expect(legacyLinkedPullRequestOf([link(7)], "project-1" as never, localIdentity)).toBeNull();
+  });
 });
 
 describe("resolveThreadPullRequestChains", () => {
@@ -256,6 +268,51 @@ describe("resolveThreadPullRequestChains", () => {
       ["derived", [1, 2, 3]],
       ["derived", [9]],
     ]);
+  });
+
+  it("keeps every link built on the same parent under it", () => {
+    const links = [
+      link(3, { snapshot: snapshot({ headBranch: "c", baseBranch: "a" }) }),
+      link(5, { snapshot: snapshot({ headBranch: "p", baseBranch: "main" }) }),
+      link(6, { snapshot: snapshot({ headBranch: "q", baseBranch: "p" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "a", baseBranch: "p" }) }),
+      link(2, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(9, { snapshot: snapshot({ headBranch: "solo", baseBranch: "main" }) }),
+    ];
+    const chains = resolveThreadPullRequestChains(links);
+    expect(
+      chains.map((chain) => [chain.layers.map((layer) => layer.number), chain.depths]),
+    ).toEqual([
+      // #6 and #1 both build on #5; #3 and #2 both build on #1.
+      [
+        [5, 6, 1, 3, 2],
+        [0, 1, 1, 2, 2],
+      ],
+      [[9], [0]],
+    ]);
+    expect(resolveThreadPullRequestBadge(links.slice(0, 5))).toEqual({
+      kind: "stack",
+      layers: 5,
+      state: "open",
+    });
+  });
+
+  it("points at the highest layer of a branched stack, not the last sibling listed", () => {
+    // #1 → #2 → #3, and #4 also builds on #1.
+    const branched = (state: ThreadPullRequestSnapshot["state"]) => [
+      link(1, { snapshot: snapshot({ state, headBranch: "a" }) }),
+      link(2, { snapshot: snapshot({ state, headBranch: "b", baseBranch: "a" }) }),
+      link(3, { snapshot: snapshot({ state, headBranch: "c", baseBranch: "b" }) }),
+      link(4, { snapshot: snapshot({ state, headBranch: "d", baseBranch: "a" }) }),
+    ];
+    const open = resolveThreadCurrentPullRequest(branched("open"));
+    expect(open?.kind === "stack" ? open.open.map((entry) => entry.number) : null).toEqual([
+      3, 4, 2, 1,
+    ]);
+    expect(resolveThreadCurrentPullRequest(branched("merged"))).toMatchObject({
+      kind: "single",
+      link: { number: 3 },
+    });
   });
 
   it("uses the native stack order when the host provides one", () => {
@@ -420,6 +477,17 @@ describe("chain selection and badge state", () => {
     });
   });
 
+  it("lists a pull request once when two links share its identity", () => {
+    const links = [
+      link(1, { snapshot: snapshot({ headBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "c" }) }),
+    ];
+    expect(resolveThreadPullRequestChains(links).map((chain) => chain.layers)).toEqual([
+      [links[0]],
+    ]);
+  });
+
   it("does not guess a parent when a head branch was reused", () => {
     const links = [
       link(1, { snapshot: snapshot({ state: "merged", headBranch: "reused" }) }),
@@ -433,6 +501,31 @@ describe("chain selection and badge state", () => {
 });
 
 describe("threadPullRequestSearchTerms", () => {
+  it.each([undefined, [], [link(34)]])(
+    "searches the branch PR alongside existing links (%j)",
+    (pullRequests) => {
+      const branchPullRequest = {
+        projectId: ProjectId.make("project"),
+        repository: "pingdotgg/t3code",
+        number: 11809,
+        url: "https://github.com/pingdotgg/t3code/pull/11809",
+      };
+      const terms = threadPullRequestSearchTerms({
+        pullRequests,
+        branchPullRequest,
+        linkedPullRequest: {
+          ...branchPullRequest,
+          number: 12,
+          url: "https://github.com/pingdotgg/t3code/pull/12",
+        },
+      });
+      for (const query of ["11809", "#11809", "pingdotgg/t3code#11809", branchPullRequest.url]) {
+        expect(terms.some((term) => term.includes(query))).toBe(true);
+      }
+      expect(terms).toContain(pullRequests?.length ? "#34" : "#12");
+    },
+  );
+
   it("includes completed and unsynced links but excludes dismissed links", () => {
     const terms = threadPullRequestSearchTerms({
       pullRequests: [

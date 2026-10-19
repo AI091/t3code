@@ -1,8 +1,8 @@
 import { TextInputWrapper } from "expo-paste-input";
 import { useImperativeHandle, useRef } from "react";
-import { TextInput, type TextInput as RNTextInput } from "react-native";
+import { TextInput, type TextInputInstance } from "react-native";
 
-import { useFontFamily } from "../lib/useFontFamily";
+import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
@@ -21,9 +21,9 @@ export function ComposerEditor({
   readOnly = false,
   ...props
 }: ComposerEditorProps) {
-  const inputRef = useRef<RNTextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const bodyText = useScaledTextRole("body");
-  const fontFamily = useFontFamily("regular");
+  const fontFamily = FONT_FAMILIES.regular;
   const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
 
   useImperativeHandle(

@@ -9,15 +9,10 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-} from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-const UPSTREAM_REF = "fe74a774532af67b5a4a3dec03ce9469e17f89af";
+const UPSTREAM_REF = "687a119f0fcaace47e1f1abcc77cec6c813fd6da";
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -145,6 +140,12 @@ const ManualSchemas: Record<string, Schema.Json> = {
   },
 };
 
+// T3 Code only uses the plan for labels, so an unknown slug must not fail the whole
+// `account/read` decode and take the provider down with it.
+const DefinitionOverrides: Record<string, Schema.Json> = {
+  PlanType: { type: "string" },
+};
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -163,7 +164,6 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
 });
 
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  // Unauthenticated GitHub API calls are capped at 60/hour; set GITHUB_TOKEN to lift that.
   const token = process.env.GITHUB_TOKEN;
   return yield* HttpClientRequest.get(url).pipe(
     HttpClientRequest.setHeader("user-agent", USER_AGENT),
@@ -375,7 +375,6 @@ function toPascalCaseMethod(method: string) {
 }
 
 function parseRequestEntries(fileContents: string): ReadonlyArray<MethodEntry> {
-  // Optional params render as `params?: Foo | undefined`; their JSON schema is `NullableFoo`.
   const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params(\??):\s*([^,}|]+)/g;
   const entries: Array<MethodEntry> = [];
   let match: RegExpExecArray | null;
@@ -430,6 +429,9 @@ function resolveResponseTypeName(
   generatedSchemaNames: ReadonlySet<string>,
 ): string {
   const overrides: Record<string, string> = {
+    "account/gatewayOAuth/cancel": "GatewayOAuthCancelResponse",
+    "account/gatewayOAuth/login": "GatewayOAuthLoginResponse",
+    "account/gatewayOAuth/read": "GatewayOAuthReadResponse",
     "account/logout": "LogoutAccountResponse",
     "account/rateLimits/read": "GetAccountRateLimitsResponse",
     "account/usage/read": "GetAccountTokenUsageResponse",
@@ -450,9 +452,7 @@ function resolveResponseTypeName(
     const fromParams = paramsType.replace(/Params$/, "Response");
     try {
       return resolveSchemaTypeName(fromParams, generatedSchemaNames);
-    } catch {
-      // Fall through to method-based lookup.
-    }
+    } catch {}
   }
 
   return resolveSchemaTypeName(`${toPascalCaseMethod(method)}Response`, generatedSchemaNames);
@@ -643,7 +643,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
         normalizeNullableTypes(
           rewriteExternalRefs(
-            definitionSchema,
+            DefinitionOverrides[definitionName] ?? definitionSchema,
             localDefinitionNames,
             file.namespace,
             exportNameByQualifiedName,
