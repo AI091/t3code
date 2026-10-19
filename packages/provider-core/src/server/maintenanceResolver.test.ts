@@ -416,16 +416,19 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     npmPackageName: "@anthropic-ai/claude-code",
     nativeUpdate: {
       args: ["update"],
-      isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
+      isCommandPath: (commandPath: string) => {
+        const normalized = normalizeCommandPath(commandPath);
+        return (
+          normalized.endsWith("/.local/bin/claude.exe") ||
+          normalized.includes("/.local/share/claude/")
+        );
+      },
     },
   };
   const otherProviderUpdate = {
     provider: driver("nativePackageTool"),
     npmPackageName: "@example/native-package-tool",
-    nativeUpdate: {
-      args: ["update"],
-      isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
-    },
+    nativeUpdate: { args: ["update"] },
   };
   const resolveInstall = (input: {
     readonly definition: PackageManagedProviderMaintenanceDefinition;
@@ -492,12 +495,14 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect.each([
     {
       name: "a native install",
+      canUpdate: true,
       definition: claudeUpdate,
       resolved: nativeClaude,
       real: nativeClaude,
     },
     {
       name: "a WinGet-shaped path off Windows",
+      canUpdate: false,
       definition: claudeUpdate,
       resolved: "/home/me/winget/links/claude.exe",
       real: "/home/me/winget/links/claude.exe",
@@ -505,38 +510,83 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     },
     {
       name: "a WinGet-named folder outside the WinGet roots",
+      canUpdate: false,
       definition: claudeUpdate,
       resolved: "C:\\Work\\WinGet\\Links\\claude.exe",
       real: "C:\\Work\\WinGet\\Links\\claude.exe",
     },
     {
       name: "a WinGet-named folder inside another directory",
+      canUpdate: false,
       definition: claudeUpdate,
       resolved: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
       real: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
     },
     {
       name: "another provider in WinGet",
+      canUpdate: true,
       definition: otherProviderUpdate,
       resolved: userWinGetLink,
       real: userWinGetPackage,
     },
     {
       name: "another WinGet package",
+      canUpdate: false,
       definition: claudeUpdate,
       resolved: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
       real: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
     },
-  ] as const)("keeps the native updater for $name", (fixture) =>
+  ] as const)("resolves update availability for $name", (fixture) =>
     Effect.gen(function* () {
       const capabilities = yield* resolveInstall(fixture);
 
-      expect(capabilities.update).toMatchObject({
-        executable: fixture.resolved,
-        args: ["update"],
-        lockKey: `${fixture.definition.provider}-native`,
-      });
+      if (fixture.canUpdate) {
+        expect(capabilities.update).toMatchObject({
+          executable: fixture.resolved,
+          args: ["update"],
+          lockKey: `${fixture.definition.provider}-native`,
+        });
+      } else {
+        expect(capabilities.update).toBeNull();
+      }
     }),
+  );
+
+  it.effect.each(["native", "wrapper"] as const)(
+    "requires native ownership for a %s ~/.local/bin/claude launcher",
+    (layout) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-claude-capabilities");
+        const binaryPath = NodePath.join(tempDir, ".local", "bin", "claude");
+        if (layout === "native") {
+          const target = NodePath.join(tempDir, ".local", "share", "claude", "versions", "2.1.0");
+          writeExecutable(target);
+          NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+          NodeFS.symlinkSync(target, binaryPath);
+        } else {
+          writeExecutable(binaryPath);
+          NodeFS.writeFileSync(
+            binaryPath,
+            '#!/bin/sh\nexec "$HOME/.local/share/mise/shims/claude" "$@"\n',
+          );
+        }
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          makePackageManagedProviderMaintenanceResolver(claudeUpdate),
+          { binaryPath, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        if (layout === "native") {
+          expect(capabilities.update).toMatchObject({
+            executable: binaryPath,
+            args: ["update"],
+            lockKey: "claudeAgent-native",
+          });
+        } else {
+          expect(capabilities.update).toBeNull();
+        }
+      }),
+    { skip: windowsHost || !symlinksSupported },
   );
 
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
