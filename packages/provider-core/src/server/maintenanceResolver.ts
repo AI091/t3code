@@ -408,13 +408,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {
     return native;
   }
-  // A `node_modules` path not proven below belongs to another package or a
-  // project, so the provider's own updater could act on the wrong install.
-  const fallback = commandPaths.some((commandPath) =>
-    normalizeCommandPath(commandPath).includes("/node_modules/"),
-  )
-    ? manual
-    : native;
+  // An unmatched native predicate or unowned `node_modules` path could make
+  // the provider's own updater act on the wrong install.
+  const fallback =
+    nativeUpdate?.isCommandPath ||
+    commandPaths.some((commandPath) => normalizeCommandPath(commandPath).includes("/node_modules/"))
+      ? manual
+      : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
