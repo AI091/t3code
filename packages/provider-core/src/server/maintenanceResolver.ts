@@ -85,6 +85,7 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath?: (commandPath: string) => boolean;
+    readonly fallback?: "native" | "manual";
     readonly env?: NodeJS.ProcessEnv;
   } | null;
 }
@@ -408,10 +409,10 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {
     return native;
   }
-  // An unmatched native predicate or unowned `node_modules` path could make
-  // the provider's own updater act on the wrong install.
+  // An unowned `node_modules` path could make the provider's own updater act
+  // on the wrong install.
   const fallback =
-    nativeUpdate?.isCommandPath ||
+    nativeUpdate?.fallback === "manual" ||
     commandPaths.some((commandPath) => normalizeCommandPath(commandPath).includes("/node_modules/"))
       ? manual
       : native;

@@ -86,14 +86,14 @@ and npm are proven by the real path (symlinks followed): a versioned keg or cask
 Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
 either the resolved path or its real target, since those installers place real files or their own
 symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory.
-Claude, Codex, and OpenCode require a recognized native layout before offering their own updater;
-unproven installs stay manual-only. Pi and Grok can fall back to their own updater, which detects
-its installer; the runner's version check catches an updater that exits 0 without updating. Mise installs stay
-manual-only because their version is pinned in mise's config. A Grok cask whose Homebrew prefix
-cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
-`npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
-compares against `brew info` since casks trail npm by hours; native installs share npm's version
-train, so the registry stays authoritative for them.
+Claude requires a recognized native layout before offering `claude update`; unproven Claude installs
+stay manual-only. Codex, OpenCode, Pi, and Grok can fall back to their own updater, which detects
+its installer; the runner's version check catches an updater that exits 0 without updating. Mise
+installs stay manual-only because their version is pinned in mise's config. A Grok cask whose
+Homebrew prefix cannot be verified also stays manual-only: `grok update` would install a second
+copy. npm updates pin `--prefix` because the `npm` on `PATH` can belong to a different Node than
+the one that owns the provider. Homebrew compares against `brew info` since casks trail npm by
+hours; native installs share npm's version train, so the registry stays authoritative for them.
 See the [resolver](../../packages/provider-core/src/server/maintenanceResolver.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The

@@ -85,6 +85,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: {
     args: ["update"],
     isCommandPath: isClaudeNativeCommandPath,
+    fallback: "manual",
   },
 });
 

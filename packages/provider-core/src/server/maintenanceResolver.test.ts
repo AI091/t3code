@@ -423,8 +423,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           normalized.includes("/.local/share/claude/")
         );
       },
+      fallback: "manual",
     },
-  };
+  } satisfies PackageManagedProviderMaintenanceDefinition;
   const otherProviderUpdate = {
     provider: driver("nativePackageTool"),
     npmPackageName: "@example/native-package-tool",
