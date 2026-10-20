@@ -33,6 +33,7 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  resolveScopedNewThreadProjectRef,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -40,6 +41,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { useSidebarProjectScope } from "./useSidebarProjectScope";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 
 interface NewThreadWorkspaceOptions {
@@ -385,6 +387,7 @@ export function useNewThreadHandler() {
 
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectScope = useSidebarProjectScope();
   const routeTarget = useThreadRouteTarget();
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
@@ -416,6 +419,13 @@ export function useHandleNewThread() {
     activeDraftThread,
     activeThread,
     defaultProjectRef,
+    // Where the sidebar's New button lands while scoped; null when unscoped.
+    scopedNewThreadProjectRef: projectScope
+      ? resolveScopedNewThreadProjectRef(
+          { activeDraftThread, activeThread: activeThread ?? undefined },
+          projectScope,
+        )
+      : null,
     handleNewThread,
     routeDraftId,
     routeThreadRef,

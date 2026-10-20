@@ -4533,6 +4533,14 @@ export default function Sidebar() {
   }, [shouldShowJumpHintsNow, updateThreadJumpHintsVisibility]);
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
+    // A scoped sidebar already names the project. Shift+click still means
+    // the current project, below.
+    const scopedProjectRef = newThreadContext.scopedNewThreadProjectRef;
+    if (scopedProjectRef && !event?.shiftKey) {
+      if (isMobile) setOpenMobile(false);
+      void newThreadContext.handleNewThread(scopedProjectRef);
+      return;
+    }
     if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({

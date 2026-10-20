@@ -204,6 +204,7 @@ describe("pending snapshot processing", () => {
       activeDraftThread: null,
       activeThread: null,
       defaultProjectRef: routeThreadRef ? projectRef : null,
+      scopedNewThreadProjectRef: null,
       handleNewThread: vi.fn<ReturnType<typeof newThread.useHandleNewThread>["handleNewThread"]>(),
       routeDraftId: null,
       routeThreadRef,
