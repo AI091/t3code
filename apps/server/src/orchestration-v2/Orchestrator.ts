@@ -5237,7 +5237,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    const usageLimitedRun =
+      activeRun === undefined &&
+      dispatchMode.type === "queue_after_active" &&
+      usageLimitHoldsQueue(projection, modelSelection.instanceId)
+        ? (latestRun ?? undefined)
+        : undefined;
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? usageLimitedRun;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
